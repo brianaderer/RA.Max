@@ -289,13 +289,39 @@ def run_supervisor(user_request: str, expert_model, worker_model) -> str:
     """
     Entry point for supervisor mode.
 
+    Runs in a loop, maintaining context across requests.
+
     Args:
-        user_request: What the user wants to accomplish
+        user_request: Initial request (can be empty to prompt user)
         expert_model: Model for planning/decisions
         worker_model: Model for worker execution
 
     Returns:
-        Summary of what was done
+        Summary of session
     """
+    from ra_aid.tools.human import ask_human
+
     supervisor = Supervisor(expert_model, worker_model)
-    return supervisor.run(user_request)
+
+    # If no initial request, prompt for one
+    if not user_request or not user_request.strip():
+        user_request = ask_human.invoke({"question": "What would you like help with?"})
+
+    # Main session loop - keep going until user exits
+    while True:
+        # Run the current request
+        result = supervisor.run(user_request)
+
+        # Ask for next request
+        console_panel("Ready for next task. Type 'exit' or 'quit' to end session.", border_style="blue")
+        next_request = ask_human.invoke({"question": "What's next?"})
+
+        # Check for exit
+        if next_request.lower().strip() in ['exit', 'quit', 'q', 'done', 'bye']:
+            console_panel("Session ended. Context preserved.", title="Goodbye", border_style="green")
+            break
+
+        # Continue with next request (context is preserved in supervisor)
+        user_request = next_request
+
+    return "Session completed."

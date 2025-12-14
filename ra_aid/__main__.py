@@ -1551,10 +1551,6 @@ def main():
 
                 # Handle supervisor mode
                 if args.supervisor:
-                    if not args.message:
-                        print_error("--message is required for supervisor mode")
-                        sys.exit(1)
-
                     print_stage_header("Supervisor Mode")
 
                     # Initialize models
@@ -1580,7 +1576,7 @@ def main():
                     from ra_aid.agents.supervisor import run_supervisor
 
                     result = run_supervisor(
-                        user_request=args.message,
+                        user_request=args.message or "",
                         expert_model=expert_model,
                         worker_model=worker_model,
                     )
