@@ -363,6 +363,14 @@ models_params = {
             "latency_coefficient": DEFAULT_BASE_LATENCY,
             "default_backend": AgentBackendType.CREATE_REACT_AGENT,
         },
+        "qwen/qwen3-coder": {
+            "token_limit": 262144,
+            "max_tokens": 262144,
+            "supports_temperature": True,
+            "default_temperature": 0.4,
+            "latency_coefficient": DEFAULT_BASE_LATENCY,
+            "default_backend": AgentBackendType.CIAYN,
+        },
     },
     "openai-compatible": {
         "qwen-qwq-32b": {

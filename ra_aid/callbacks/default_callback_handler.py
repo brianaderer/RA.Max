@@ -43,6 +43,10 @@ MODEL_COSTS = {
         "input": Decimal("0.000015"),
         "output": Decimal("0.000075"),
     },
+    "qwen/qwen3-coder": {
+        "input": Decimal("0.00000022"),  # $0.22/M tokens
+        "output": Decimal("0.00000095"),  # $0.95/M tokens
+    },
     "claude-3-sonnet-20240229": {
         "input": Decimal("0.000003"),
         "output": Decimal("0.000015"),

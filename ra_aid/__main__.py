@@ -34,6 +34,7 @@ from ra_aid.config import (
     DEFAULT_OPENAI_MODEL,
     DEFAULT_GEMINI_MODEL,
     DEFAULT_DEEPSEEK_MODEL,
+    DEFAULT_OPENROUTER_MODEL,
     DEFAULT_PROVIDER,
     DEFAULT_RECURSION_LIMIT,
     DEFAULT_TEST_CMD_TIMEOUT,
@@ -717,6 +718,8 @@ Examples:
             parsed_args.model = parsed_args.model or DEFAULT_ANTHROPIC_MODEL
         elif parsed_args.provider == "gemini":
             parsed_args.model = parsed_args.model or DEFAULT_GEMINI_MODEL
+        elif parsed_args.provider == "openrouter":
+            parsed_args.model = parsed_args.model or DEFAULT_OPENROUTER_MODEL
         elif not parsed_args.model and not parsed_args.research_only:
             # Require model for other providers unless in research mode
             if not hasattr(parsed_args, 'command') or parsed_args.command is None or parsed_args.command == "agent":
@@ -751,6 +754,9 @@ Examples:
             elif os.environ.get("DEEPSEEK_API_KEY"): # Check main Deepseek key as fallback
                 parsed_args.expert_provider = "deepseek"
                 parsed_args.expert_model = DEFAULT_EXPERT_DEEPSEEK_MODEL # Specific default for Deepseek expert
+            elif os.environ.get("ANTHROPIC_API_KEY"): # Use Anthropic for expert if available
+                parsed_args.expert_provider = "anthropic"
+                parsed_args.expert_model = parsed_args.expert_model or DEFAULT_EXPERT_ANTHROPIC_MODEL
             else:
                 # Final Fallback: Use main provider settings if none of the above conditions met
                 # Special-case OpenAI main provider: we want to use the provider but let later logic choose the best expert model.
