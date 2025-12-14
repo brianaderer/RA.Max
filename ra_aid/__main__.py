@@ -497,7 +497,14 @@ def parse_arguments(args=None):
     parser.add_argument(
         "--fast-startup",
         action="store_true",
-        help="Enable fast startup mode (implies --skip-version-check and --skip-env-discovery)",
+        default=True,
+        help="Enable fast startup mode (implies --skip-version-check and --skip-env-discovery). Enabled by default.",
+    )
+    parser.add_argument(
+        "--no-fast-startup",
+        action="store_false",
+        dest="fast_startup",
+        help="Disable fast startup mode",
     )
     parser.add_argument(
         "--server",
@@ -525,7 +532,14 @@ def parse_arguments(args=None):
     parser.add_argument(
         "--show-thoughts",
         action="store_true",
-        help="Display model thinking content extracted from think tags when supported by the model",
+        default=True,
+        help="Display model thinking content extracted from think tags when supported by the model. Enabled by default.",
+    )
+    parser.add_argument(
+        "--no-show-thoughts",
+        action="store_false",
+        dest="show_thoughts",
+        help="Hide model thinking content",
     )
     parser.add_argument(
         "--show-cost",
