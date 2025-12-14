@@ -1556,7 +1556,6 @@ def main():
                     return
 
                 # Handle supervisor mode (default) unless --legacy is specified
-                print(f"DEBUG: supervisor={args.supervisor}, legacy={getattr(args, 'legacy', 'NOT SET')}, chat={args.chat}")
                 if args.supervisor and not getattr(args, 'legacy', False):
                     print_stage_header("Supervisor Mode")
 

@@ -186,7 +186,7 @@ class CiaynAgent:
 
         # Debug: log available tool names
         tool_names = [t.func.__name__ for t in tools]
-        logger.info(f"CIAYN Agent initialized with tools: {tool_names}")
+        logger.debug(f"CIAYN Agent initialized with tools: {tool_names}")
         self.max_history_messages = max_history_messages
         self.max_tokens = max_tokens
         self.chat_history = []
@@ -712,8 +712,8 @@ class CiaynAgent:
             error_msg = f"Error: {str(e)} \\n Could not execute code: {code}"
             tool_name = self.extract_tool_name(code)
             available_tool_names = [t.func.__name__ for t in self.tools]
-            logger.info(f"Tool execution failed for `{tool_name}`: {str(e)}")
-            logger.info(f"Available tools were: {available_tool_names}")
+            logger.debug(f"Tool execution failed for `{tool_name}`: {str(e)}")
+            logger.debug(f"Available tools were: {available_tool_names}")
 
             # Record error in trajectory
             try:

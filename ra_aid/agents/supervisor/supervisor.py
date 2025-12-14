@@ -136,19 +136,46 @@ class Supervisor:
         ]
 
         response = self.expert_model.invoke(messages)
-        content = response.content if isinstance(response.content, str) else str(response.content)
+        content = self._extract_text_content(response.content)
 
         return self._parse_plan(content)
+
+    def _extract_text_content(self, content) -> str:
+        """Extract text from various content formats."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            # Handle list of content blocks (Claude format)
+            texts = []
+            for block in content:
+                if isinstance(block, str):
+                    texts.append(block)
+                elif isinstance(block, dict) and 'text' in block:
+                    texts.append(block['text'])
+                elif hasattr(block, 'text'):
+                    texts.append(block.text)
+            return '\n'.join(texts)
+        return str(content)
 
     def _parse_plan(self, content: str) -> List[Task]:
         """Parse JSON plan from expert response."""
         try:
             # Extract JSON array from response
-            # Handle potential markdown code blocks
             content = content.strip()
-            if content.startswith("```"):
-                content = re.sub(r'^```\w*\n?', '', content)
-                content = re.sub(r'\n?```$', '', content)
+
+            # Handle markdown code blocks
+            if "```" in content:
+                # Extract content between code blocks
+                match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
+                if match:
+                    content = match.group(1)
+
+            # Try to find JSON array in the response
+            if not content.startswith('['):
+                # Look for [ ... ] pattern
+                match = re.search(r'\[[\s\S]*\]', content)
+                if match:
+                    content = match.group(0)
 
             plan_data = json.loads(content)
 
@@ -166,6 +193,7 @@ class Supervisor:
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             logger.error(f"Failed to parse plan: {e}")
             logger.error(f"Content was: {content}")
+            console_panel(f"Failed to parse plan: {e}\n\nResponse was:\n{content[:300]}...", title="Planning Error", border_style="red")
             return []
 
     def _get_next_task(self) -> Optional[Task]:
@@ -214,7 +242,7 @@ Respond with just SKIP or ABORT.""")
         ]
 
         response = self.expert_model.invoke(messages)
-        content = response.content.upper() if isinstance(response.content, str) else str(response.content).upper()
+        content = self._extract_text_content(response.content).upper()
 
         if "ABORT" in content:
             return False
@@ -314,7 +342,16 @@ def run_supervisor(user_request: str, expert_model, worker_model) -> str:
 
         # Ask for next request
         console_panel("Ready for next task. Type 'exit' or 'quit' to end session.", border_style="blue")
-        next_request = ask_human.invoke({"question": "What's next?"})
+        
+        # Generate contextually relevant follow-up prompt using expert model
+        from ra_aid.tools.expert import ask_expert
+        completed_tasks = [t for t in supervisor.tasks if t.status.value == "completed"]
+        task_summaries = ", ".join([t.description for t in completed_tasks[-3:]])  # Last 3 tasks
+        follow_up_prompt = ask_expert.invoke({
+            "question": f"Based on completed tasks ({task_summaries}), suggest a brief, natural follow-up question. Keep it under 10 words."
+        })
+        
+        next_request = ask_human.invoke({"question": follow_up_prompt})
 
         # Check for exit
         if next_request.lower().strip() in ['exit', 'quit', 'q', 'done', 'bye']:
