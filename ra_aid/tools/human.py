@@ -3,6 +3,7 @@ import re
 from langchain_core.tools import tool
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -14,6 +15,36 @@ console = Console()
 
 # Supported image extensions
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+
+
+def normalize_image_paths(text: str) -> str:
+    """Convert drag-dropped file paths to the standard @"/path/to/image.png" format.
+
+    When a file is dragged into the terminal, it pastes a backslash-escaped path.
+    This function detects that and reformats it properly.
+    """
+    text = text.strip()
+
+    # Already has @ prefix - leave it alone
+    if '@' in text:
+        return text
+
+    # Check if this looks like a bare image path (starts with / or ~/, ends with image ext)
+    lower_text = text.lower()
+    is_image_path = any(lower_text.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp'])
+
+    if is_image_path and (text.startswith('/') or text.startswith('~/')):
+        # Unescape backslash-escaped characters
+        unescaped = text.replace('\\ ', ' ').replace('\\', '')
+
+        # Verify the file exists
+        expanded = os.path.expanduser(unescaped)
+        if os.path.isfile(expanded):
+            logger.debug(f"Normalized drag-drop path: {unescaped}")
+            return f'@"{unescaped}"'
+
+    return text
+
 
 # Patterns to match image paths:
 # 1. Quoted paths (handles spaces): @"/path/to/my image.png" or @'/path/to/image.png'
@@ -37,14 +68,55 @@ IMAGE_PATH_PATTERNS = [
 ]
 
 
+def transform_pasted_path(text: str) -> str:
+    """Transform a pasted/drag-dropped path to @"/path" format if it's an image."""
+    text = text.strip()
+
+    # Already formatted or not a path
+    if '@' in text or not (text.startswith('/') or text.startswith('~/')):
+        return text
+
+    # Check if it ends with an image extension
+    lower = text.lower()
+    if not any(lower.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+        return text
+
+    # Unescape backslash-escaped characters (from terminal drag-drop)
+    unescaped = text.replace('\\ ', ' ').replace('\\,', ',').replace('\\', '')
+
+    # Verify file exists
+    expanded = os.path.expanduser(unescaped)
+    if os.path.isfile(expanded):
+        return f'@"{unescaped}"'
+
+    return text
+
+
 def create_keybindings():
-    """Create custom key bindings for Ctrl+D submission."""
+    """Create custom key bindings for input handling."""
     bindings = KeyBindings()
 
-    @bindings.add("c-d")
+    @bindings.add("enter")
     def submit(event):
-        """Trigger submission when Ctrl+D is pressed."""
+        """Submit on Enter."""
         event.current_buffer.validate_and_handle()
+
+    @bindings.add("c-j")
+    def newline(event):
+        """Insert newline on Ctrl+J."""
+        event.current_buffer.insert_text("\n")
+
+    @bindings.add("c-c")
+    def clear_line(event):
+        """Clear current line on Ctrl+C."""
+        event.current_buffer.reset()
+
+    @bindings.add(Keys.BracketedPaste)
+    def handle_paste(event):
+        """Handle bracketed paste (drag-drop) and transform image paths."""
+        data = event.data
+        transformed = transform_pasted_path(data)
+        event.current_buffer.insert_text(transformed)
 
     return bindings
 
@@ -153,8 +225,8 @@ def ask_human(question: str) -> str:
         Panel(
             Markdown(
                 question
-                + "\n\n*Multiline input supported; Ctrl+D to submit. Ctrl+C to exit.*\n"
-                + '*Include images: @"/path/to/image.png" (use quotes for spaces)*'
+                + "\n\n*Enter to submit. Ctrl+J for new line. Ctrl+C to clear. Type `exit!!` to quit.*\n"
+                + '*Drag images or use @"/path/to/image.png"*'
             ),
             title="💭 Question for Human",
             border_style="yellow bold",
@@ -171,7 +243,16 @@ def ask_human(question: str) -> str:
 
     response = session.prompt("> ", wrap_lines=True)
     print()
-    
+
+    # Check for exit command
+    if response.strip() == "exit!!":
+        console.print("👋 Bye!")
+        import sys
+        sys.exit(0)
+
+    # Normalize image paths (convert drag-drop formats to @"/path/to/image.png")
+    response = normalize_image_paths(response)
+
     # Record human response in database
     try:
         from ra_aid.database.repositories.human_input_repository import get_human_input_repository
