@@ -15,8 +15,17 @@ console = Console()
 # Supported image extensions
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
 
-# Pattern to match image paths: @/path/to/image.png or just /path/to/image.png
-IMAGE_PATH_PATTERN = re.compile(r'@?((?:/[^\s]+|~[^\s]+)\.(?:png|jpg|jpeg|gif|webp))', re.IGNORECASE)
+# Patterns to match image paths:
+# 1. Quoted paths (handles spaces): @"/path/to/my image.png" or @'/path/to/image.png'
+# 2. Unquoted paths (no spaces): @/path/to/image.png
+IMAGE_PATH_PATTERNS = [
+    # Double-quoted paths: @"/path with spaces/image.png"
+    re.compile(r'@"([^"]+\.(?:png|jpg|jpeg|gif|webp))"', re.IGNORECASE),
+    # Single-quoted paths: @'/path with spaces/image.png'
+    re.compile(r"@'([^']+\.(?:png|jpg|jpeg|gif|webp))'", re.IGNORECASE),
+    # Unquoted paths (no spaces): @/path/to/image.png
+    re.compile(r'@((?:/[^\s]+|~/[^\s]+)\.(?:png|jpg|jpeg|gif|webp))', re.IGNORECASE),
+]
 
 
 def create_keybindings():
@@ -35,8 +44,9 @@ def extract_image_paths(text: str) -> tuple[str, list[str]]:
     """Extract image paths from text and return cleaned text + paths.
     
     Supports:
-    - @/path/to/image.png (explicit marker)
-    - /absolute/path/to/image.png
+    - @"/path/with spaces/image.png" (quoted for spaces)
+    - @'/path/with spaces/image.png' (single quotes)
+    - @/path/to/image.png (no spaces)
     - ~/path/from/home/image.jpg
     
     Args:
@@ -45,28 +55,31 @@ def extract_image_paths(text: str) -> tuple[str, list[str]]:
     Returns:
         Tuple of (cleaned_text, list_of_valid_image_paths)
     """
-    matches = IMAGE_PATH_PATTERN.findall(text)
     valid_paths = []
-    
-    for match in matches:
-        # Expand ~ to home directory
-        path = os.path.expanduser(match)
-        if os.path.isfile(path):
-            valid_paths.append(path)
-            logger.debug(f"Found valid image path: {path}")
-        else:
-            logger.debug(f"Image path not found, keeping in text: {match}")
-    
-    # Remove the @path markers from text (but keep paths that weren't found as files)
     cleaned_text = text
-    for path in valid_paths:
-        # Remove both @/path and /path variants
-        cleaned_text = cleaned_text.replace(f"@{path}", "").replace(f"@{match}", "")
-        # Also try removing the original match
-        for match in matches:
-            expanded = os.path.expanduser(match)
-            if expanded == path:
-                cleaned_text = cleaned_text.replace(f"@{match}", "").replace(match, "")
+    
+    # Track what we've already matched to avoid duplicates
+    matched_paths = set()
+    
+    for pattern in IMAGE_PATH_PATTERNS:
+        for match in pattern.finditer(text):
+            path = match.group(1)
+            full_match = match.group(0)
+            
+            # Expand ~ to home directory
+            expanded_path = os.path.expanduser(path)
+            
+            if expanded_path in matched_paths:
+                continue
+                
+            if os.path.isfile(expanded_path):
+                valid_paths.append(expanded_path)
+                matched_paths.add(expanded_path)
+                # Remove the full match from text
+                cleaned_text = cleaned_text.replace(full_match, "")
+                logger.debug(f"Found valid image path: {expanded_path}")
+            else:
+                logger.debug(f"Image path not found: {expanded_path}")
     
     # Clean up extra whitespace
     cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
@@ -88,14 +101,14 @@ def promote_to_expert_with_images(question: str, image_paths: list[str]) -> str:
     
     console.print(
         Panel(
-            f"🖼️ Detected {len(image_paths)} image(s) - promoting to expert model (Claude Opus)",
+            f"🖼️ Detected {len(image_paths)} image(s) - promoting to expert model (Claude Opus)\n"
+            + "\n".join(f"  • {p}" for p in image_paths),
             title="Auto-Promotion",
             border_style="magenta"
         )
     )
     
     # Call the expert image tool directly (not as a langchain tool)
-    # We need to call the underlying function
     return ask_expert_with_image.func(question=question, image_paths=image_paths)
 
 
@@ -110,16 +123,18 @@ def ask_human(question: str) -> str:
         The user's response as a string
         
     Note:
-        If the user includes image paths in their response (e.g., @/path/to/screenshot.png),
-        the request will automatically be promoted to the expert model (Claude Opus)
-        which has vision capabilities.
+        If the user includes image paths in their response, the request will 
+        automatically be promoted to the expert model (Claude Opus) which has 
+        vision capabilities.
+        
+        For paths with spaces, use quotes: @"/path/with spaces/image.png"
     """
     console.print(
         Panel(
             Markdown(
                 question
                 + "\n\n*Multiline input supported; Ctrl+D to submit. Ctrl+C to exit.*\n"
-                + "*Include images with @/path/to/image.png - auto-promotes to expert model.*"
+                + '*Include images: @"/path/to/image.png" (use quotes for spaces)*'
             ),
             title="💭 Question for Human",
             border_style="yellow bold",
@@ -142,7 +157,6 @@ def ask_human(question: str) -> str:
         from ra_aid.database.repositories.human_input_repository import get_human_input_repository
         from ra_aid.database.repositories.config_repository import get_config_repository
         
-        # Determine the source based on context
         if get_config_repository().get("chat_mode", False):
             source = "chat"
         elif get_config_repository().get("hil", False):
