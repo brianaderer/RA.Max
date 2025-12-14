@@ -46,3 +46,6 @@ logs/
 # RA.Aid specific
 .ra_aid/
 
+# SQLite database files
+.ra-aid/pk.db*
+

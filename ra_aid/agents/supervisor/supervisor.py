@@ -139,6 +139,10 @@ class Supervisor:
                 self.completed_task_ids.add(task.id)
                 self._print_task_complete(task)
 
+                # Store task completion in conversation history
+                task_summary = f"[Task: {task.description}] Result: {result[:500] if result else 'completed'}"
+                self.conversation_history.append((f"Executed: {task.description}", task_summary))
+
                 # Review progress and potentially adjust plan
                 if not self._review_progress(user_request):
                     break  # Expert says we're done early
@@ -244,16 +248,40 @@ class Supervisor:
                     # Create task to execute with the artifact
                     artifact = self.working_artifact
                     self.working_artifact = None  # Clear after using
+
                     if artifact["type"] == "commit_message":
                         # Store full message in context for the implementor
                         self.context += f"\n\n## Commit Message to Use:\n{artifact['content']}"
                         return [Task(
                             id=0,
                             type=TaskType.IMPLEMENT,
-                            description=f"Run: git add -A && git commit -m with the commit message from context"
+                            description=f"Run: git add -A && git commit with the commit message from context"
+                        )], None
+                    elif artifact["type"] == "code":
+                        # Store code in context for implementor to write to file
+                        description = artifact.get("description", "code changes")
+                        self.context += f"\n\n## Code to Apply:\n{description}\n```\n{artifact['content']}\n```"
+                        return [Task(
+                            id=0,
+                            type=TaskType.IMPLEMENT,
+                            description=f"Apply the code changes from context: {description}"
+                        )], None
+                    elif artifact["type"] == "plan":
+                        # Convert plan to tasks
+                        self.context += f"\n\n## Plan to Execute:\n{artifact['content']}"
+                        return [Task(
+                            id=0,
+                            type=TaskType.RESEARCH,
+                            description=f"Begin executing plan: {artifact.get('description', 'the plan')}"
                         )], None
                     else:
-                        return [], f"Ready to execute {artifact['type']}, but execution not yet implemented."
+                        # Generic execution - store in context
+                        self.context += f"\n\n## Artifact to Use ({artifact['type']}):\n{artifact['content']}"
+                        return [Task(
+                            id=0,
+                            type=TaskType.IMPLEMENT,
+                            description=f"Execute {artifact['type']}: {artifact.get('description', 'as specified')}"
+                        )], None
                 # Single task dict? Wrap in list
                 if "type" in parsed and "description" in parsed:
                     parsed = [parsed]
