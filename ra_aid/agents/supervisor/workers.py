@@ -210,13 +210,14 @@ Do NOT announce what you're doing. Just use the tools.
 
 
 class Researcher(Worker):
-    """Worker that gathers information. Read-only tools only."""
+    """Worker that gathers information. Has read tools + shell for git/info commands."""
 
     def __init__(self, model):
         tools = [
             read_file_tool,
             ripgrep_search,
             list_directory_tree,
+            run_shell_command,  # For git diff, git status, git log, etc.
         ]
         super().__init__(model, tools)
 
@@ -228,6 +229,7 @@ Rules:
 - Return ONLY facts you discovered
 - Do NOT suggest improvements or next steps
 - Do NOT make changes to any files
+- For git info, use run_shell_command with: git diff, git status, git log, etc.
 - Be concise and factual
 
 When done, respond with DONE: followed by your findings."""

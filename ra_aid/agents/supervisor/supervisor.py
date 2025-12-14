@@ -38,15 +38,19 @@ Rules:
 3. Be MINIMAL - don't over-plan, fewer tasks is better
 4. Order by dependencies - research before implement, implement before verify
 
-Output your plan as a JSON array of tasks:
+If the request is:
+- A question needing clarification → output: {"clarify": "your question here"}
+- A conversational message (greeting, thanks, etc.) → output: {"chat": "your response"}
+- An actionable task → output a JSON array of tasks
+
+For actionable tasks, output:
 [
   {"type": "RESEARCH", "description": "Find where X is defined"},
-  {"type": "RESEARCH", "description": "Check existing patterns for Y"},
   {"type": "IMPLEMENT", "description": "Add Z to file A"},
   {"type": "VERIFY", "description": "Run tests to verify changes"}
 ]
 
-ONLY output the JSON array, nothing else."""
+ONLY output JSON, nothing else."""
 
 
 class Supervisor:
@@ -77,6 +81,7 @@ class Supervisor:
         self.tasks: List[Task] = []
         self.context: str = ""  # Accumulated research findings
         self.completed_task_ids: set = set()
+        self.conversation_history: List[tuple[str, str]] = []  # (user_msg, assistant_msg) pairs
 
     def run(self, user_request: str) -> str:
         """
@@ -92,7 +97,15 @@ class Supervisor:
 
         # === PHASE 1: PLAN ===
         console_panel("Creating plan...", title="Phase 1: Planning", border_style="yellow")
-        self.tasks = self._create_plan(user_request)
+        self.tasks, chat_message = self._create_plan(user_request)
+
+        # Handle conversational/clarification responses
+        if chat_message:
+            console_panel(chat_message, title="💬 Response", border_style="cyan")
+            # Store in conversation history for context
+            self.conversation_history.append((user_request, chat_message))
+            return chat_message
+
         self._print_plan()
 
         if not self.tasks:
@@ -115,6 +128,10 @@ class Supervisor:
                 self.completed_task_ids.add(task.id)
                 self._print_task_complete(task)
 
+                # Review progress and potentially adjust plan
+                if not self._review_progress(user_request):
+                    break  # Expert says we're done early
+
             except Exception as e:
                 logger.error(f"Task failed: {e}")
                 task.mark_failed(str(e))
@@ -128,11 +145,29 @@ class Supervisor:
         console_panel("Generating summary...", title="Phase 3: Complete", border_style="blue")
         return self._create_summary()
 
-    def _create_plan(self, user_request: str) -> List[Task]:
-        """Use expert model to create task list."""
+    def _create_plan(self, user_request: str) -> tuple[List[Task], Optional[str]]:
+        """Use expert model to create task list.
+
+        Returns:
+            Tuple of (tasks, message). If message is set, it's a chat/clarify response.
+        """
+        # Build context from conversation history
+        history_context = ""
+        if self.conversation_history:
+            history_lines = []
+            for user_msg, assistant_msg in self.conversation_history[-5:]:  # Last 5 exchanges
+                history_lines.append(f"User: {user_msg}")
+                history_lines.append(f"Assistant: {assistant_msg}")
+            history_context = f"\n\nRecent conversation:\n" + "\n".join(history_lines)
+
+        # Include accumulated research/task context
+        research_context = ""
+        if self.context:
+            research_context = f"\n\nAccumulated context from previous tasks:\n{self.context[-2000:]}"  # Last 2000 chars
+
         messages = [
             SystemMessage(content=PLANNING_PROMPT),
-            HumanMessage(content=f"User request: {user_request}")
+            HumanMessage(content=f"User request: {user_request}{history_context}{research_context}")
         ]
 
         response = self.expert_model.invoke(messages)
@@ -157,30 +192,41 @@ class Supervisor:
             return '\n'.join(texts)
         return str(content)
 
-    def _parse_plan(self, content: str) -> List[Task]:
-        """Parse JSON plan from expert response."""
+    def _parse_plan(self, content: str) -> tuple[List[Task], Optional[str]]:
+        """Parse JSON plan from expert response.
+
+        Returns:
+            Tuple of (tasks, message). If message is set, it's a chat/clarify response.
+        """
         try:
-            # Extract JSON array from response
+            # Extract JSON from response
             content = content.strip()
 
             # Handle markdown code blocks
             if "```" in content:
-                # Extract content between code blocks
                 match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
                 if match:
                     content = match.group(1)
 
-            # Try to find JSON array in the response
-            if not content.startswith('['):
-                # Look for [ ... ] pattern
-                match = re.search(r'\[[\s\S]*\]', content)
-                if match:
-                    content = match.group(0)
+            # Try to parse as JSON
+            parsed = json.loads(content)
 
-            plan_data = json.loads(content)
+            # Check if it's a chat/clarify response (dict with chat or clarify key)
+            if isinstance(parsed, dict):
+                if "chat" in parsed:
+                    return [], parsed["chat"]
+                if "clarify" in parsed:
+                    return [], parsed["clarify"]
+                # Single task dict? Wrap in list
+                if "type" in parsed and "description" in parsed:
+                    parsed = [parsed]
+
+            # Should be a list of tasks
+            if not isinstance(parsed, list):
+                return [], f"I'm not sure how to help with that. Could you rephrase your request?"
 
             tasks = []
-            for i, item in enumerate(plan_data):
+            for i, item in enumerate(parsed):
                 task_type = TaskType[item["type"].upper()]
                 tasks.append(Task(
                     id=i,
@@ -188,13 +234,16 @@ class Supervisor:
                     description=item["description"],
                 ))
 
-            return tasks
+            return tasks, None
 
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             logger.error(f"Failed to parse plan: {e}")
             logger.error(f"Content was: {content}")
+            # Return the raw content as a chat response if it looks conversational
+            if any(word in content.lower() for word in ["sorry", "could you", "what", "help", "?"]):
+                return [], content
             console_panel(f"Failed to parse plan: {e}\n\nResponse was:\n{content[:300]}...", title="Planning Error", border_style="red")
-            return []
+            return [], None
 
     def _get_next_task(self) -> Optional[Task]:
         """Get next pending task with satisfied dependencies."""
@@ -250,6 +299,101 @@ Respond with just SKIP or ABORT.""")
         # Default to skip and continue
         task.mark_skipped(f"Skipped due to error: {task.error}")
         self.completed_task_ids.add(task.id)  # Allow dependents to proceed
+        return True
+
+    def _review_progress(self, user_request: str) -> bool:
+        """
+        Review progress after task completion and potentially adjust plan.
+
+        Returns:
+            True to continue, False if we're done early
+        """
+        completed = [t for t in self.tasks if t.status == TaskStatus.COMPLETED]
+        pending = [t for t in self.tasks if t.status == TaskStatus.PENDING]
+
+        # No pending tasks = nothing to review
+        if not pending:
+            return True
+
+        # Build context for review
+        completed_summary = "\n".join([
+            f"- [{t.type.value}] {t.description}: {t.result[:200] if t.result else 'done'}..."
+            for t in completed[-3:]  # Last 3 completed
+        ])
+        pending_summary = "\n".join([
+            f"- [{t.type.value}] {t.description}"
+            for t in pending
+        ])
+
+        messages = [
+            SystemMessage(content="""You are reviewing progress on a task. Based on what's been completed, decide what to do next.
+
+Options:
+1. CONTINUE - proceed with remaining tasks as planned
+2. DONE - the goal is already achieved, skip remaining tasks
+3. ADD: {"type": "RESEARCH|IMPLEMENT|VERIFY", "description": "..."} - add a new task
+4. REMOVE: <task_description> - remove a pending task that's no longer needed
+
+Respond with just one option. Be concise."""),
+            HumanMessage(content=f"""
+Original request: {user_request}
+
+Completed tasks:
+{completed_summary}
+
+Pending tasks:
+{pending_summary}
+
+Accumulated context (what we've learned):
+{self.context[:1000] if self.context else 'None yet'}
+
+What should we do?""")
+        ]
+
+        response = self.expert_model.invoke(messages)
+        content = self._extract_text_content(response.content).strip()
+
+        # Parse response
+        upper_content = content.upper()
+
+        if upper_content.startswith("DONE"):
+            console_panel("Expert determined goal is achieved - skipping remaining tasks",
+                         title="📋 Plan Adjusted", border_style="yellow")
+            # Mark remaining tasks as skipped
+            for t in pending:
+                t.mark_skipped("Goal achieved early")
+                self.completed_task_ids.add(t.id)
+            return False
+
+        if upper_content.startswith("ADD:"):
+            try:
+                # Parse the new task JSON
+                json_str = content[4:].strip()
+                if json_str.startswith("{"):
+                    new_task_data = json.loads(json_str)
+                    new_id = max(t.id for t in self.tasks) + 1
+                    new_task = Task(
+                        id=new_id,
+                        type=TaskType[new_task_data["type"].upper()],
+                        description=new_task_data["description"],
+                    )
+                    self.tasks.append(new_task)
+                    console_panel(f"Added: [{new_task.type.value}] {new_task.description}",
+                                 title="📋 Task Added", border_style="yellow")
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"Failed to parse new task: {e}")
+
+        if upper_content.startswith("REMOVE:"):
+            desc_to_remove = content[7:].strip().lower()
+            for t in pending:
+                if desc_to_remove in t.description.lower():
+                    t.mark_skipped("Removed by expert review")
+                    self.completed_task_ids.add(t.id)
+                    console_panel(f"Removed: [{t.type.value}] {t.description}",
+                                 title="📋 Task Removed", border_style="yellow")
+                    break
+
+        # Default: CONTINUE
         return True
 
     def _create_summary(self) -> str:
@@ -342,21 +486,41 @@ def run_supervisor(user_request: str, expert_model, worker_model) -> str:
 
         # Ask for next request
         console_panel("Ready for next task. Type 'exit' or 'quit' to end session.", border_style="blue")
-        
-        # Generate contextually relevant follow-up prompt using expert model
+
+        # Generate contextually relevant follow-up prompt
         from ra_aid.tools.expert import ask_expert
         completed_tasks = [t for t in supervisor.tasks if t.status.value == "completed"]
-        task_summaries = ", ".join([t.description for t in completed_tasks[-3:]])  # Last 3 tasks
-        follow_up_prompt = ask_expert.invoke({
-            "question": f"Based on completed tasks ({task_summaries}), suggest a brief, natural follow-up question. Keep it under 10 words."
-        })
-        
+
+        if completed_tasks:
+            # Use expert to suggest contextual follow-up based on completed work
+            task_summaries = ", ".join([t.description for t in completed_tasks[-3:]])
+            follow_up_prompt = ask_expert.invoke({
+                "question": f"Based on completed tasks ({task_summaries}), suggest a brief, natural follow-up question. Keep it under 10 words."
+            })
+        elif supervisor.conversation_history:
+            # No tasks but we had conversation - use that context
+            recent_exchange = supervisor.conversation_history[-1]
+            user_msg = recent_exchange[0]
+            assistant_response = recent_exchange[1][:500] if len(recent_exchange[1]) > 500 else recent_exchange[1]
+            follow_up_prompt = ask_expert.invoke({
+                "question": f"User asked: '{user_msg}'. You responded: '{assistant_response}'. Based on this exchange, suggest a brief, natural follow-up question (under 10 words)."
+            })
+        else:
+            # Fresh start - use simple prompt
+            follow_up_prompt = "What would you like help with?"
+
         next_request = ask_human.invoke({"question": follow_up_prompt})
 
         # Check for exit
         if next_request.lower().strip() in ['exit', 'quit', 'q', 'done', 'bye']:
             console_panel("Session ended. Context preserved.", title="Goodbye", border_style="green")
             break
+
+        # Store the follow-up exchange in conversation history
+        # This gives context for short responses like "yes", "no", "do it"
+        # Format: (what was asked, user's response)
+        exchange_context = f"Assistant asked: '{follow_up_prompt}' - User answered: '{next_request}'"
+        supervisor.conversation_history.append((exchange_context, "acknowledged"))
 
         # Continue with next request (context is preserved in supervisor)
         user_request = next_request
