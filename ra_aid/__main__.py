@@ -433,6 +433,11 @@ def parse_arguments(args=None):
         help="Enable chat mode with direct human interaction (implies --hil)",
     )
     parser.add_argument(
+        "--supervisor",
+        action="store_true",
+        help="Enable supervisor mode: expert plans tasks, workers execute",
+    )
+    parser.add_argument(
         "--temperature",
         type=float,
         help="LLM temperature (0.0-2.0). Controls randomness in responses",
@@ -1542,6 +1547,51 @@ def main():
                         ),
                         config,
                     )
+                    return
+
+                # Handle supervisor mode
+                if args.supervisor:
+                    if not args.message:
+                        print_error("--message is required for supervisor mode")
+                        sys.exit(1)
+
+                    print_stage_header("Supervisor Mode")
+
+                    # Initialize models
+                    # Expert model = main model (or expert model if specified)
+                    expert_provider = args.expert_provider or args.provider
+                    expert_model_name = args.expert_model or args.model
+
+                    expert_model = initialize_llm(
+                        expert_provider,
+                        expert_model_name,
+                        temperature=args.temperature,
+                    )
+
+                    # Worker model = can be cheaper/faster
+                    # For now, use the same model, but could be configured separately
+                    worker_model = initialize_llm(
+                        args.provider,
+                        args.model,
+                        temperature=args.temperature,
+                    )
+
+                    # Import and run supervisor
+                    from ra_aid.agents.supervisor import run_supervisor
+
+                    result = run_supervisor(
+                        user_request=args.message,
+                        expert_model=expert_model,
+                        worker_model=worker_model,
+                    )
+
+                    # Print final result
+                    print()
+                    console.print(Panel(
+                        Markdown(result),
+                        title="Supervisor Complete",
+                        border_style="green bold",
+                    ))
                     return
 
                 # Validate message is provided
