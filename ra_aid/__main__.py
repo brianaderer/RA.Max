@@ -1422,17 +1422,27 @@ def main():
                         human_input_id=human_input_id,
                     )
 
-                    # Get project info (skip if fast startup is enabled for faster chat mode startup)
+                    # Get project info (skip deep scan if fast startup is enabled)
+                    # Always run pwd and ls -la for basic context
+                    import subprocess
+                    try:
+                        pwd_result = subprocess.run(['pwd'], capture_output=True, text=True, timeout=5)
+                        ls_result = subprocess.run(['ls', '-la'], capture_output=True, text=True, timeout=5)
+                        quick_context = f"Current Directory:\n{pwd_result.stdout}\nDirectory Listing:\n{ls_result.stdout}"
+                    except Exception as e:
+                        logger.warning(f"Failed to get directory context: {e}")
+                        quick_context = ""
+
                     if args.fast_startup or args.skip_env_discovery:
-                        logger.debug("Skipping project info scan for faster startup")
-                        formatted_project_info = "Project info scan skipped for faster startup. Use fuzzy_find_project_files or list_dir to explore the codebase."
+                        logger.debug("Skipping deep project info scan for faster startup")
+                        formatted_project_info = f"{quick_context}\n\n(Deep project scan skipped for faster startup. Use fuzzy_find_project_files or list_dir to explore further.)"
                     else:
                         try:
                             project_info = get_project_info(".", file_limit=2000)
-                            formatted_project_info = format_project_info(project_info)
+                            formatted_project_info = f"{quick_context}\n\n{format_project_info(project_info)}"
                         except Exception as e:
                             logger.warning(f"Failed to get project info: {e}")
-                            formatted_project_info = ""
+                            formatted_project_info = quick_context
 
                     # Get initial request from user
                     initial_request = ask_human.invoke(
