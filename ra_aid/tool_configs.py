@@ -6,6 +6,7 @@ from ra_aid.console import console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from ra_aid.tools import (
+    ask_expert_with_image,
     ask_expert,
     ask_human,
     emit_expert_context,
@@ -190,7 +191,7 @@ MODIFICATION_TOOLS = [file_str_replace, put_complete_file_contents]
 COMMON_TOOLS = get_read_only_tools(use_aider=use_aider)
 # CUSTOM TOOLS will be set dynamically based on config, default defined here
 CUSTOM_TOOLS = []
-EXPERT_TOOLS = [emit_expert_context, ask_expert]
+EXPERT_TOOLS = [emit_expert_context, ask_expert, ask_expert_with_image]
 RESEARCH_TOOLS = [
     emit_research_notes,
     # *TEMPORARILY* disabled to improve tool calling perf.
