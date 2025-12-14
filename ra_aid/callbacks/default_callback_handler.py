@@ -333,6 +333,15 @@ class DefaultCallbackHandler(BaseCallbackHandler, metaclass=Singleton):
         except Exception as e:
             logger.error(f"Error in on_llm_start: {e}", exc_info=True)
 
+    def on_llm_new_token(self, token: str, **kwargs) -> None:
+        """Handle streaming tokens - print them as they arrive."""
+        try:
+            # Print token without newline for streaming effect
+            sys.stdout.write(token)
+            sys.stdout.flush()
+        except Exception as e:
+            logger.error(f"Error in on_llm_new_token: {e}", exc_info=True)
+
     def _extract_token_usage(self, response: LLMResult) -> dict:
         """Extract token usage information from various response formats."""
         token_usage = {}

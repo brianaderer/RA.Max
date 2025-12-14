@@ -153,6 +153,7 @@ def create_openrouter_client(
         "api_key": api_key,
         "base_url": base_url,
         "model": model_name,
+        "streaming": True,  # Enable streaming for real-time token output
         "timeout": int(
             get_env_var(name="LLM_REQUEST_TIMEOUT", default=LLM_REQUEST_TIMEOUT)
         ),
