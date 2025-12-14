@@ -333,56 +333,10 @@ class DefaultCallbackHandler(BaseCallbackHandler, metaclass=Singleton):
         except Exception as e:
             logger.error(f"Error in on_llm_start: {e}", exc_info=True)
 
-    # Buffer for detecting tool calls in streamed output
-    _stream_buffer: str = ""
-    _is_tool_call: bool = False
-
-    # Known tool function names to filter out
-    TOOL_PATTERNS = [
-        "read_file_tool", "ask_expert", "emit_research_notes", "run_shell_command",
-        "list_directory_tool", "grep_search", "put_complete_file_contents",
-        "file_str_replace", "request_implementation", "request_research",
-        "emit_key_facts", "emit_key_snippets", "mark_research_complete",
-        "task_completed", "ask_human", "web_search", "emit_related_files",
-    ]
-
     def on_llm_new_token(self, token: str, **kwargs) -> None:
-        """Handle streaming tokens - filter out tool calls, only show reasoning."""
-        try:
-            # Add to buffer
-            self._stream_buffer += token
-
-            # Check if this looks like a tool call starting
-            for pattern in self.TOOL_PATTERNS:
-                if pattern in self._stream_buffer:
-                    self._is_tool_call = True
-                    break
-
-            # If we detect a tool call, don't print anything
-            if self._is_tool_call:
-                # Check if tool call is complete (ends with closing paren and possible newlines)
-                if self._stream_buffer.rstrip().endswith(")"):
-                    # Tool call complete, reset for next chunk
-                    self._stream_buffer = ""
-                    self._is_tool_call = False
-                return
-
-            # Not a tool call - print the token
-            # But only if buffer is short enough that we're confident it's not a tool call starting
-            if len(self._stream_buffer) < 20:
-                # Wait for more tokens to be sure
-                return
-
-            # Flush buffer up to last 20 chars (keep some for pattern matching)
-            to_print = self._stream_buffer[:-20]
-            self._stream_buffer = self._stream_buffer[-20:]
-
-            if to_print:
-                sys.stdout.write(to_print)
-                sys.stdout.flush()
-
-        except Exception as e:
-            logger.error(f"Error in on_llm_new_token: {e}", exc_info=True)
+        """Handle streaming tokens - disabled for now."""
+        # Streaming disabled - tool calls get shown in panels instead
+        pass
 
     def _extract_token_usage(self, response: LLMResult) -> dict:
         """Extract token usage information from various response formats."""
@@ -570,13 +524,6 @@ class DefaultCallbackHandler(BaseCallbackHandler, metaclass=Singleton):
 
     def on_llm_end(self, response: LLMResult, **kwargs) -> None:
         try:
-            # Flush any remaining stream buffer (non-tool-call content)
-            if self._stream_buffer and not self._is_tool_call:
-                sys.stdout.write(self._stream_buffer)
-                sys.stdout.flush()
-            self._stream_buffer = ""
-            self._is_tool_call = False
-
             if self._last_request_time is None:
                 logger.debug("No request start time found, using default duration")
                 duration = 0.1  # Default duration in seconds
