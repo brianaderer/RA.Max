@@ -1154,6 +1154,15 @@ models_params = {
             "default_temperature": DEFAULT_TEMPERATURE,
             "latency_coefficient": DEFAULT_BASE_LATENCY,
         },
+        "claude-opus-4-5-20251101": {
+            "token_limit": 200000,
+            "supports_temperature": True,
+            "supports_thinking": True,
+            "max_tokens": 64000,
+            "default_temperature": 1.0,
+            "latency_coefficient": DEFAULT_BASE_LATENCY,
+            "default_backend": AgentBackendType.CREATE_REACT_AGENT,
+        },
         "claude-3-sonnet-20240229": {
             "token_limit": 200000,
             "supports_temperature": True,

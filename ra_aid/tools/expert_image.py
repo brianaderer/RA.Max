@@ -285,6 +285,18 @@ def ask_expert_with_image(question: str, image_paths: List[str]) -> str:
     except Exception as e:
         logger.error(f"Exception during content processing: {str(e)}")
         raise
+
+    # Ensure content is a string (safety net for thinking model responses)
+    if isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict):
+                text_parts.append(item.get("text", str(item)))
+            elif isinstance(item, str):
+                text_parts.append(item)
+            else:
+                text_parts.append(str(item))
+        content = "\n".join(text_parts)
     
     # Record response in trajectory
     try:

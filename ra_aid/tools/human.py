@@ -18,13 +18,22 @@ IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
 # Patterns to match image paths:
 # 1. Quoted paths (handles spaces): @"/path/to/my image.png" or @'/path/to/image.png'
 # 2. Unquoted paths (no spaces): @/path/to/image.png
+# 3. Bare paths (drag-and-drop): /path/to/image.png or "/path/to/image.png"
 IMAGE_PATH_PATTERNS = [
-    # Double-quoted paths: @"/path with spaces/image.png"
+    # Double-quoted paths with @: @"/path with spaces/image.png"
     re.compile(r'@"([^"]+\.(?:png|jpg|jpeg|gif|webp))"', re.IGNORECASE),
-    # Single-quoted paths: @'/path with spaces/image.png'
+    # Single-quoted paths with @: @'/path with spaces/image.png'
     re.compile(r"@'([^']+\.(?:png|jpg|jpeg|gif|webp))'", re.IGNORECASE),
-    # Unquoted paths (no spaces): @/path/to/image.png
+    # Unquoted paths with @: @/path/to/image.png
     re.compile(r'@((?:/[^\s]+|~/[^\s]+)\.(?:png|jpg|jpeg|gif|webp))', re.IGNORECASE),
+    # Bare double-quoted paths (drag-drop with spaces): "/path with spaces/image.png"
+    re.compile(r'"(/[^"]+\.(?:png|jpg|jpeg|gif|webp))"', re.IGNORECASE),
+    # Bare single-quoted paths (drag-drop with spaces): '/path with spaces/image.png'
+    re.compile(r"'(/[^']+\.(?:png|jpg|jpeg|gif|webp))'", re.IGNORECASE),
+    # Bare unquoted absolute paths (drag-drop): /path/to/image.png
+    re.compile(r'(?:^|\s)(/[^\s"\']+\.(?:png|jpg|jpeg|gif|webp))(?:\s|$)', re.IGNORECASE),
+    # Bare paths with ~ (drag-drop): ~/path/to/image.png
+    re.compile(r'(?:^|\s)(~/[^\s"\']+\.(?:png|jpg|jpeg|gif|webp))(?:\s|$)', re.IGNORECASE),
 ]
 
 
@@ -42,48 +51,59 @@ def create_keybindings():
 
 def extract_image_paths(text: str) -> tuple[str, list[str]]:
     """Extract image paths from text and return cleaned text + paths.
-    
+
     Supports:
     - @"/path/with spaces/image.png" (quoted for spaces)
     - @'/path/with spaces/image.png' (single quotes)
     - @/path/to/image.png (no spaces)
     - ~/path/from/home/image.jpg
-    
+    - Drag-and-drop: /path/to/image.png (bare paths)
+    - Drag-and-drop: "/path with spaces/image.png" (quoted bare paths)
+
     Args:
         text: The input text potentially containing image paths
-        
+
     Returns:
         Tuple of (cleaned_text, list_of_valid_image_paths)
     """
     valid_paths = []
     cleaned_text = text
-    
+
     # Track what we've already matched to avoid duplicates
     matched_paths = set()
-    
+
     for pattern in IMAGE_PATH_PATTERNS:
         for match in pattern.finditer(text):
             path = match.group(1)
             full_match = match.group(0)
-            
+
             # Expand ~ to home directory
             expanded_path = os.path.expanduser(path)
-            
+
             if expanded_path in matched_paths:
                 continue
-                
+
             if os.path.isfile(expanded_path):
                 valid_paths.append(expanded_path)
                 matched_paths.add(expanded_path)
-                # Remove the full match from text
-                cleaned_text = cleaned_text.replace(full_match, "")
+                # For bare paths, only remove the path itself (not surrounding whitespace)
+                # For @-prefixed and quoted paths, remove the full match
+                if full_match.strip() == path or full_match.strip() == f'"{path}"' or full_match.strip() == f"'{path}'":
+                    # Bare path - remove just the path (preserve any surrounding context)
+                    cleaned_text = cleaned_text.replace(path, "")
+                    # Also remove quotes if present
+                    cleaned_text = cleaned_text.replace(f'"{path}"', "")
+                    cleaned_text = cleaned_text.replace(f"'{path}'", "")
+                else:
+                    # @-prefixed path - remove the full match including @
+                    cleaned_text = cleaned_text.replace(full_match, "")
                 logger.debug(f"Found valid image path: {expanded_path}")
             else:
                 logger.debug(f"Image path not found: {expanded_path}")
-    
+
     # Clean up extra whitespace
     cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
-    
+
     return cleaned_text, valid_paths
 
 
@@ -179,13 +199,16 @@ def ask_human(question: str) -> str:
         # Auto-promote to expert model with images
         logger.info(f"Promoting to expert model with {len(image_paths)} image(s)")
         expert_response = promote_to_expert_with_images(cleaned_text, image_paths)
-        
+
         # Return both the original request context and expert's analysis
+        # Include instruction to continue the conversation
         return f"""[User provided {len(image_paths)} image(s) for analysis]
 
 User's question: {cleaned_text}
 
 Expert analysis (from Claude Opus with vision):
-{expert_response}"""
+{expert_response}
+
+[Image analysis complete. Call ask_human to check if the user needs anything else or has follow-up questions.]"""
     
     return response

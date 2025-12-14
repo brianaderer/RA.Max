@@ -5,6 +5,11 @@ import sys
 import uuid
 from datetime import datetime
 
+from dotenv import load_dotenv
+
+# Load .env file early, before any other imports that might read environment variables
+load_dotenv()
+
 import litellm
 import uvicorn
 
@@ -477,6 +482,21 @@ def parse_arguments(args=None):
         type=int,
         default=DEFAULT_TEST_CMD_TIMEOUT,
         help=f"Timeout in seconds for test command execution (default: {DEFAULT_TEST_CMD_TIMEOUT})",
+    )
+    parser.add_argument(
+        "--skip-version-check",
+        action="store_true",
+        help="Skip checking for newer versions on startup (faster startup)",
+    )
+    parser.add_argument(
+        "--skip-env-discovery",
+        action="store_true",
+        help="Skip environment discovery on startup (faster startup, but environment info won't be available to agents)",
+    )
+    parser.add_argument(
+        "--fast-startup",
+        action="store_true",
+        help="Enable fast startup mode (implies --skip-version-check and --skip-env-discovery)",
     )
     parser.add_argument(
         "--server",
@@ -1000,10 +1020,13 @@ def wipe_project_memory(custom_dir=None):
         return f"Error: Failed to wipe project memory: {str(e)}"
 
 
-def build_status():
+def build_status(skip_version_check=False):
     """Build status panel with model and feature information.
 
     Includes memory statistics at the bottom with counts of key facts, snippets, and research notes.
+
+    Args:
+        skip_version_check: If True, skip checking for newer versions
     """
     status = Text()
 
@@ -1094,11 +1117,12 @@ def build_status():
     if fact_count > 0 or snippet_count > 0 or note_count > 0:
         status.append(" (use --wipe-project-memory to reset)")
 
-    # Check for newer version
-    version_message = check_for_newer_version()
-    if version_message:
-        status.append("\n\n")
-        status.append(version_message, style="yellow")
+    # Check for newer version (unless skipped)
+    if not skip_version_check:
+        version_message = check_for_newer_version()
+        if version_message:
+            status.append("\n\n")
+            status.append(version_message, style="yellow")
 
     return status
 
@@ -1106,6 +1130,11 @@ def build_status():
 def main():
     """Main entry point for the ra-aid command line tool."""
     args = parse_arguments() # This now parses global args and subcommands
+
+    # Handle --fast-startup flag by enabling skip flags
+    if args.fast_startup:
+        args.skip_version_check = True
+        args.skip_env_discovery = True
 
     # Setup logging early. project_state_dir is a global arg.
     setup_logging(
@@ -1203,10 +1232,14 @@ def main():
             config = {}
 
             # Initialize repositories with database connection
-            # Create environment inventory data
-            env_discovery = EnvDiscovery()
-            env_discovery.discover()
-            env_data = env_discovery.format_markdown()
+            # Create environment inventory data (skip if requested for faster startup)
+            if args.skip_env_discovery:
+                logger.debug("Skipping environment discovery (--skip-env-discovery)")
+                env_data = "Environment discovery skipped for faster startup."
+            else:
+                env_discovery = EnvDiscovery()
+                env_discovery.discover()
+                env_data = env_discovery.format_markdown()
 
             with (
                 SessionRepositoryManager(db) as session_repo,
@@ -1311,7 +1344,7 @@ def main():
                 custom_tools_enabled = config_repo.get("custom_tools_enabled", False)
 
                 # Build status panel with memory statistics
-                status = build_status()
+                status = build_status(skip_version_check=args.skip_version_check)
 
                 console.print(
                     Panel(
@@ -1369,13 +1402,17 @@ def main():
                         human_input_id=human_input_id,
                     )
 
-                    # Get project info
-                    try:
-                        project_info = get_project_info(".", file_limit=2000)
-                        formatted_project_info = format_project_info(project_info)
-                    except Exception as e:
-                        logger.warning(f"Failed to get project info: {e}")
-                        formatted_project_info = ""
+                    # Get project info (skip if fast startup is enabled for faster chat mode startup)
+                    if args.fast_startup or args.skip_env_discovery:
+                        logger.debug("Skipping project info scan for faster startup")
+                        formatted_project_info = "Project info scan skipped for faster startup. Use fuzzy_find_project_files or list_dir to explore the codebase."
+                    else:
+                        try:
+                            project_info = get_project_info(".", file_limit=2000)
+                            formatted_project_info = format_project_info(project_info)
+                        except Exception as e:
+                            logger.warning(f"Failed to get project info: {e}")
+                            formatted_project_info = ""
 
                     # Get initial request from user
                     initial_request = ask_human.invoke(

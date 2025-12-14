@@ -564,7 +564,10 @@ def create_llm_client(
     num_ctx_value = config_repo.get(num_ctx_key, 262144)
 
     # Handle temperature settings
-    if is_expert:
+    # Note: Models with thinking enabled require temperature=1
+    if supports_thinking:
+        temp_kwargs = {"temperature": 1} if supports_temperature else {}
+    elif is_expert:
         temp_kwargs = {"temperature": 0} if supports_temperature else {}
     elif supports_temperature:
         if temperature is None:
