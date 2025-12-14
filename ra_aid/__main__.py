@@ -435,7 +435,13 @@ def parse_arguments(args=None):
     parser.add_argument(
         "--supervisor",
         action="store_true",
-        help="Enable supervisor mode: expert plans tasks, workers execute",
+        default=True,
+        help="Enable supervisor mode: expert plans tasks, workers execute (default: on)",
+    )
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="Use legacy agent architecture instead of supervisor mode",
     )
     parser.add_argument(
         "--temperature",
@@ -1549,8 +1555,8 @@ def main():
                     )
                     return
 
-                # Handle supervisor mode
-                if args.supervisor:
+                # Handle supervisor mode (default) unless --legacy is specified
+                if args.supervisor and not args.legacy:
                     print_stage_header("Supervisor Mode")
 
                     # Initialize models
