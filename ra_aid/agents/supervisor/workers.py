@@ -204,7 +204,7 @@ class Verifier(Worker):
         tools = [
             read_file_tool,
             run_shell_command,
-            list_directory_tool,
+            list_directory_tree,
         ]
         super().__init__(model, tools)
 
