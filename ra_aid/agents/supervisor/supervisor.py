@@ -38,17 +38,25 @@ Rules:
 3. Be MINIMAL - don't over-plan, fewer tasks is better
 4. Order by dependencies - research before implement, implement before verify
 
-If the request is:
-- A question needing clarification → output: {"clarify": "your question here"}
-- A conversational message (greeting, thanks, etc.) → output: {"chat": "your response"}
-- An actionable task → output a JSON array of tasks
+Response types (output ONLY ONE as JSON):
 
-For actionable tasks, output:
-[
-  {"type": "RESEARCH", "description": "Find where X is defined"},
-  {"type": "IMPLEMENT", "description": "Add Z to file A"},
-  {"type": "VERIFY", "description": "Run tests to verify changes"}
-]
+1. Clarification needed:
+   {"clarify": "your question here"}
+
+2. Conversational response:
+   {"chat": "your response"}
+
+3. Create/update an artifact (commit message, plan, document, code block):
+   {"artifact": {"type": "commit_message|plan|document|code", "content": "the full content", "description": "brief description"}}
+
+4. Execute with current artifact (when user approves):
+   {"execute_artifact": true}
+
+5. Actionable tasks:
+   [{"type": "RESEARCH", "description": "..."}, {"type": "IMPLEMENT", "description": "..."}]
+
+When user asks to draft/write/create something iterable, use artifact response.
+When user says "yes", "do it", "commit", etc. to approve an artifact, use execute_artifact.
 
 ONLY output JSON, nothing else."""
 
@@ -82,6 +90,9 @@ class Supervisor:
         self.context: str = ""  # Accumulated research findings
         self.completed_task_ids: set = set()
         self.conversation_history: List[tuple[str, str]] = []  # (user_msg, assistant_msg) pairs
+
+        # Working artifact - the current thing being iterated on
+        self.working_artifact: Optional[dict] = None  # {"type": "commit_message|plan|document|code", "content": "...", "description": "..."}
 
     def run(self, user_request: str) -> str:
         """
@@ -165,9 +176,14 @@ class Supervisor:
         if self.context:
             research_context = f"\n\nAccumulated context from previous tasks:\n{self.context[-2000:]}"  # Last 2000 chars
 
+        # Include working artifact if one exists
+        artifact_context = ""
+        if self.working_artifact:
+            artifact_context = f"\n\nCURRENT WORKING ARTIFACT ({self.working_artifact['type']}):\n```\n{self.working_artifact['content']}\n```\nUser may be asking to modify this or approve it."
+
         messages = [
             SystemMessage(content=PLANNING_PROMPT),
-            HumanMessage(content=f"User request: {user_request}{history_context}{research_context}")
+            HumanMessage(content=f"User request: {user_request}{history_context}{research_context}{artifact_context}")
         ]
 
         response = self.expert_model.invoke(messages)
@@ -211,12 +227,33 @@ class Supervisor:
             # Try to parse as JSON
             parsed = json.loads(content)
 
-            # Check if it's a chat/clarify response (dict with chat or clarify key)
+            # Check response type
             if isinstance(parsed, dict):
                 if "chat" in parsed:
                     return [], parsed["chat"]
                 if "clarify" in parsed:
                     return [], parsed["clarify"]
+                if "artifact" in parsed:
+                    # Store the artifact for iteration
+                    artifact = parsed["artifact"]
+                    self.working_artifact = artifact
+                    # Format artifact for display
+                    artifact_display = f"**{artifact.get('description', 'Draft')}**\n\n```\n{artifact['content']}\n```\n\nReady to proceed, or would you like changes?"
+                    return [], artifact_display
+                if "execute_artifact" in parsed and self.working_artifact:
+                    # Create task to execute with the artifact
+                    artifact = self.working_artifact
+                    self.working_artifact = None  # Clear after using
+                    if artifact["type"] == "commit_message":
+                        # Store full message in context for the implementor
+                        self.context += f"\n\n## Commit Message to Use:\n{artifact['content']}"
+                        return [Task(
+                            id=0,
+                            type=TaskType.IMPLEMENT,
+                            description=f"Run: git add -A && git commit -m with the commit message from context"
+                        )], None
+                    else:
+                        return [], f"Ready to execute {artifact['type']}, but execution not yet implemented."
                 # Single task dict? Wrap in list
                 if "type" in parsed and "description" in parsed:
                     parsed = [parsed]
@@ -491,7 +528,11 @@ def run_supervisor(user_request: str, expert_model, worker_model) -> str:
         from ra_aid.tools.expert import ask_expert
         completed_tasks = [t for t in supervisor.tasks if t.status.value == "completed"]
 
-        if completed_tasks:
+        if supervisor.working_artifact:
+            # There's an artifact being worked on - ask about it
+            artifact_type = supervisor.working_artifact.get("type", "item")
+            follow_up_prompt = f"Proceed with this {artifact_type.replace('_', ' ')}? (or request changes)"
+        elif completed_tasks:
             # Use expert to suggest contextual follow-up based on completed work
             task_summaries = ", ".join([t.description for t in completed_tasks[-3:]])
             follow_up_prompt = ask_expert.invoke({
